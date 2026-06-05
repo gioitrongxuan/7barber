@@ -3,26 +3,35 @@ name: Build & Deploy
 on:
   push:
     branches: [master]
-  pull_request:
-    types: [closed]
-    branches: [master]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Build Docker image
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package build output
         run: |
-          docker build -t 7barber:latest .
-          docker save 7barber:latest | gzip > 7barber.tar.gz
+          mkdir -p dist
+          cp -r .next/standalone/. dist/
+          cp -r .next/static dist/.next/static
+          cp -r public dist/public
+          cp -r data dist/data
+          tar -czf dist.tar.gz dist/
 
       - name: Deploy to EC2
         env:
@@ -33,40 +42,70 @@ jobs:
           echo "$EC2_SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
 
-          # Copy docker image and compose file
           scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
-            7barber.tar.gz docker-compose.yml nginx.conf \
+            dist.tar.gz nginx.conf \
             $EC2_USERNAME@$EC2_HOST:/tmp/
 
-          # Run deploy script on EC2
           ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
             $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
             set -e
 
-            # Load new docker image
-            docker load < /tmp/7barber.tar.gz
-
-            # Create app directory
-            mkdir -p ~/7barber
-            cp /tmp/docker-compose.yml ~/7barber/
-            cd ~/7barber
-
-            # Stop old container, start new one
-            docker compose down || true
-            docker compose up -d
-
-            # Setup nginx if not configured
-            if [ ! -f /etc/nginx/sites-enabled/7barber ]; then
-              sudo cp /tmp/nginx.conf /etc/nginx/sites-available/7barber
-              sudo ln -sf /etc/nginx/sites-available/7barber /etc/nginx/sites-enabled/7barber
-              sudo nginx -t && sudo systemctl reload nginx
+            # --- Install Node.js 20 nếu chưa có ---
+            if ! node -e "if(parseInt(process.versions.node)<20)process.exit(1)" 2>/dev/null; then
+              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+              sudo apt-get install -y nodejs
             fi
 
-            # Clean up
-            rm -f /tmp/7barber.tar.gz /tmp/docker-compose.yml /tmp/nginx.conf
-            docker image prune -f
+            # --- Install PM2 nếu chưa có ---
+            if ! command -v pm2 &>/dev/null; then
+              sudo npm install -g pm2
+            fi
 
-            echo "✅ Deployment successful!"
+            # --- Backup dữ liệu người dùng ---
+            if [ -f ~/7barber/data/content.json ]; then
+              cp ~/7barber/data/content.json /tmp/content.json.bak
+            fi
+            if [ -d ~/7barber/public/uploads ]; then
+              cp -r ~/7barber/public/uploads /tmp/uploads.bak
+            fi
+
+            # --- Giải nén bản build mới ---
+            rm -rf /tmp/dist
+            tar -xzf /tmp/dist.tar.gz -C /tmp/
+            rm -rf ~/7barber
+            mv /tmp/dist ~/7barber
+
+            # --- Khôi phục dữ liệu người dùng ---
+            mkdir -p ~/7barber/public/uploads ~/7barber/data
+            if [ -f /tmp/content.json.bak ]; then
+              cp /tmp/content.json.bak ~/7barber/data/content.json
+              rm /tmp/content.json.bak
+            fi
+            if [ -d /tmp/uploads.bak ]; then
+              cp -r /tmp/uploads.bak/. ~/7barber/public/uploads/
+              rm -rf /tmp/uploads.bak
+            fi
+
+            # --- Nginx ---
+            if [ ! -f /etc/nginx/sites-enabled/7barber ]; then
+              sudo apt-get install -y nginx
+              sudo cp /tmp/nginx.conf /etc/nginx/sites-available/7barber
+              sudo ln -sf /etc/nginx/sites-available/7barber /etc/nginx/sites-enabled/7barber
+              sudo rm -f /etc/nginx/sites-enabled/default
+              sudo nginx -t && sudo systemctl enable --now nginx
+            fi
+            sudo nginx -t && sudo systemctl reload nginx
+
+            # --- Start / Restart với PM2 ---
+            cd ~/7barber
+            pm2 delete 7barber 2>/dev/null || true
+            PORT=3000 pm2 start server.js --name 7barber
+            pm2 save
+            # Tự chạy lại khi reboot
+            pm2 startup | grep "sudo" | bash || true
+
+            rm -f /tmp/dist.tar.gz /tmp/nginx.conf
+            echo "✅ Deploy thành công!"
           ENDSSH
 
           rm -f /tmp/deploy_key
