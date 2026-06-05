@@ -8,9 +8,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const cookieStore = await cookies();
+  // secure: false để hỗ trợ HTTP (chưa có SSL)
   cookieStore.set('admin_session', getSessionSecret(), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: false,
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7,
     path: '/',
