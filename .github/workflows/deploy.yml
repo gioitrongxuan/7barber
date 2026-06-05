@@ -48,11 +48,10 @@ jobs:
             dist.tar.gz nginx.conf \
             $EC2_USERNAME@$EC2_HOST:/tmp/
 
-      - name: Install Node.js & PM2 on EC2
+      - name: Setup swap & install dependencies on EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           ssh -i /tmp/deploy_key \
             -o StrictHostKeyChecking=no \
@@ -62,23 +61,39 @@ jobs:
           set -e
           export DEBIAN_FRONTEND=noninteractive
 
+          # --- Tạo swap 1GB nếu chưa có ---
+          if [ ! -f /swapfile ]; then
+            echo "--- Tạo swap 1GB ---"
+            sudo fallocate -l 1G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            sudo sysctl vm.swappiness=10
+            echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
+          fi
+          echo "RAM + Swap: $(free -h | grep -E 'Mem|Swap')"
+
+          # --- Node.js 20 ---
           if ! node -e "if(parseInt(process.versions.node)<20)process.exit(1)" 2>/dev/null; then
             echo "--- Cài Node.js 20 ---"
             curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
           fi
 
+          # --- PM2 ---
           if ! command -v pm2 &>/dev/null; then
             echo "--- Cài PM2 ---"
             sudo npm install -g pm2
           fi
 
+          # --- Nginx ---
           if ! command -v nginx &>/dev/null; then
             echo "--- Cài Nginx ---"
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
           fi
 
-          echo "Node: $(node -v), PM2: $(pm2 -v), Nginx: $(nginx -v 2>&1)"
+          echo "Node: $(node -v) | PM2: $(pm2 -v) | Nginx: $(nginx -v 2>&1)"
           ENDSSH
 
       - name: Deploy app on EC2
@@ -138,17 +153,22 @@ jobs:
           fi
           sudo nginx -t && sudo systemctl enable nginx && sudo systemctl reload nginx
 
-          # --- PM2 restart ---
+          # --- PM2: giới hạn 200MB, tự restart nếu vượt ---
           cd ~/7barber
           pm2 delete 7barber 2>/dev/null || true
-          PORT=3000 pm2 start server.js --name 7barber
+          PORT=3000 NODE_OPTIONS="--max-old-space-size=180" \
+            pm2 start server.js \
+              --name 7barber \
+              --max-memory-restart 200M \
+              --restart-delay 3000
           pm2 save
 
           # --- PM2 tự start khi reboot ---
-          sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME | tail -1 | bash 2>/dev/null || true
+          sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME 2>/dev/null | grep "sudo" | bash || true
 
           rm -f /tmp/dist.tar.gz /tmp/nginx.conf
           echo "✅ Deploy thành công!"
+          free -h
           ENDSSH
 
           rm -f /tmp/deploy_key
