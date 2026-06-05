@@ -108,25 +108,19 @@ jobs:
             $EC2_USERNAME@$EC2_HOST bash << 'ENDSSH'
           set -e
 
-          # --- Backup dữ liệu người dùng ---
-          if [ -f ~/7barber/data/content.json ]; then
-            cp ~/7barber/data/content.json /tmp/content.json.bak
-          fi
+          # --- Backup ảnh upload của người dùng (KHÔNG backup content.json) ---
           if [ -d ~/7barber/public/uploads ]; then
             cp -r ~/7barber/public/uploads /tmp/uploads.bak
           fi
 
-          # --- Giải nén bản build mới ---
+          # --- Giải nén bản build mới (content.json từ repo luôn được dùng) ---
           rm -rf /tmp/dist
           tar -xzf /tmp/dist.tar.gz -C /tmp/
           rm -rf ~/7barber
           mv /tmp/dist ~/7barber
 
-          # --- Khôi phục dữ liệu người dùng ---
+          # --- Chỉ khôi phục ảnh upload, KHÔNG ghi đè content.json ---
           mkdir -p ~/7barber/public/uploads ~/7barber/data
-          if [ -f /tmp/content.json.bak ]; then
-            mv /tmp/content.json.bak ~/7barber/data/content.json
-          fi
           if [ -d /tmp/uploads.bak ]; then
             cp -r /tmp/uploads.bak/. ~/7barber/public/uploads/
             rm -rf /tmp/uploads.bak
