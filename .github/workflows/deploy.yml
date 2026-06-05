@@ -1,0 +1,72 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -t 7barber:latest .
+          docker save 7barber:latest | gzip > 7barber.tar.gz
+
+      - name: Deploy to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          echo "$EC2_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          # Copy docker image and compose file
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            7barber.tar.gz docker-compose.yml nginx.conf \
+            $EC2_USERNAME@$EC2_HOST:/tmp/
+
+          # Run deploy script on EC2
+          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
+            set -e
+
+            # Load new docker image
+            docker load < /tmp/7barber.tar.gz
+
+            # Create app directory
+            mkdir -p ~/7barber
+            cp /tmp/docker-compose.yml ~/7barber/
+            cd ~/7barber
+
+            # Stop old container, start new one
+            docker compose down || true
+            docker compose up -d
+
+            # Setup nginx if not configured
+            if [ ! -f /etc/nginx/sites-enabled/7barber ]; then
+              sudo cp /tmp/nginx.conf /etc/nginx/sites-available/7barber
+              sudo ln -sf /etc/nginx/sites-available/7barber /etc/nginx/sites-enabled/7barber
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+
+            # Clean up
+            rm -f /tmp/7barber.tar.gz /tmp/docker-compose.yml /tmp/nginx.conf
+            docker image prune -f
+
+            echo "✅ Deployment successful!"
+          ENDSSH
+
+          rm -f /tmp/deploy_key
