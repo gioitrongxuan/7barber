@@ -33,7 +33,7 @@ jobs:
           cp -r data dist/data
           tar -czf dist.tar.gz dist/
 
-      - name: Deploy to EC2
+      - name: Copy files to EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
@@ -41,71 +41,114 @@ jobs:
         run: |
           echo "$EC2_SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-
-          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+          scp -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=10 \
             dist.tar.gz nginx.conf \
             $EC2_USERNAME@$EC2_HOST:/tmp/
 
-          ssh -i /tmp/deploy_key -o StrictHostKeyChecking=no \
-            $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
-            set -e
+      - name: Install Node.js & PM2 on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=10 \
+            $EC2_USERNAME@$EC2_HOST bash << 'ENDSSH'
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
 
-            # --- Install Node.js 20 nếu chưa có ---
-            if ! node -e "if(parseInt(process.versions.node)<20)process.exit(1)" 2>/dev/null; then
-              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-              sudo apt-get install -y nodejs
-            fi
+          if ! node -e "if(parseInt(process.versions.node)<20)process.exit(1)" 2>/dev/null; then
+            echo "--- Cài Node.js 20 ---"
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - 2>/dev/null
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+          fi
 
-            # --- Install PM2 nếu chưa có ---
-            if ! command -v pm2 &>/dev/null; then
-              sudo npm install -g pm2
-            fi
+          if ! command -v pm2 &>/dev/null; then
+            echo "--- Cài PM2 ---"
+            sudo npm install -g pm2
+          fi
 
-            # --- Backup dữ liệu người dùng ---
-            if [ -f ~/7barber/data/content.json ]; then
-              cp ~/7barber/data/content.json /tmp/content.json.bak
-            fi
-            if [ -d ~/7barber/public/uploads ]; then
-              cp -r ~/7barber/public/uploads /tmp/uploads.bak
-            fi
+          if ! command -v nginx &>/dev/null; then
+            echo "--- Cài Nginx ---"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+          fi
 
-            # --- Giải nén bản build mới ---
-            rm -rf /tmp/dist
-            tar -xzf /tmp/dist.tar.gz -C /tmp/
-            rm -rf ~/7barber
-            mv /tmp/dist ~/7barber
+          echo "Node: $(node -v), PM2: $(pm2 -v), Nginx: $(nginx -v 2>&1)"
+          ENDSSH
 
-            # --- Khôi phục dữ liệu người dùng ---
-            mkdir -p ~/7barber/public/uploads ~/7barber/data
-            if [ -f /tmp/content.json.bak ]; then
-              cp /tmp/content.json.bak ~/7barber/data/content.json
-              rm /tmp/content.json.bak
-            fi
-            if [ -d /tmp/uploads.bak ]; then
-              cp -r /tmp/uploads.bak/. ~/7barber/public/uploads/
-              rm -rf /tmp/uploads.bak
-            fi
+      - name: Deploy app on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+        run: |
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=10 \
+            $EC2_USERNAME@$EC2_HOST bash << 'ENDSSH'
+          set -e
 
-            # --- Nginx ---
-            if [ ! -f /etc/nginx/sites-enabled/7barber ]; then
-              sudo apt-get install -y nginx
-              sudo cp /tmp/nginx.conf /etc/nginx/sites-available/7barber
-              sudo ln -sf /etc/nginx/sites-available/7barber /etc/nginx/sites-enabled/7barber
-              sudo rm -f /etc/nginx/sites-enabled/default
-              sudo nginx -t && sudo systemctl enable --now nginx
-            fi
-            sudo nginx -t && sudo systemctl reload nginx
+          # --- Backup dữ liệu người dùng ---
+          if [ -f ~/7barber/data/content.json ]; then
+            cp ~/7barber/data/content.json /tmp/content.json.bak
+          fi
+          if [ -d ~/7barber/public/uploads ]; then
+            cp -r ~/7barber/public/uploads /tmp/uploads.bak
+          fi
 
-            # --- Start / Restart với PM2 ---
-            cd ~/7barber
-            pm2 delete 7barber 2>/dev/null || true
-            PORT=3000 pm2 start server.js --name 7barber
-            pm2 save
-            # Tự chạy lại khi reboot
-            pm2 startup | grep "sudo" | bash || true
+          # --- Giải nén bản build mới ---
+          rm -rf /tmp/dist
+          tar -xzf /tmp/dist.tar.gz -C /tmp/
+          rm -rf ~/7barber
+          mv /tmp/dist ~/7barber
 
-            rm -f /tmp/dist.tar.gz /tmp/nginx.conf
-            echo "✅ Deploy thành công!"
+          # --- Khôi phục dữ liệu người dùng ---
+          mkdir -p ~/7barber/public/uploads ~/7barber/data
+          if [ -f /tmp/content.json.bak ]; then
+            mv /tmp/content.json.bak ~/7barber/data/content.json
+          fi
+          if [ -d /tmp/uploads.bak ]; then
+            cp -r /tmp/uploads.bak/. ~/7barber/public/uploads/
+            rm -rf /tmp/uploads.bak
+          fi
+          ENDSSH
+
+      - name: Setup Nginx & Start PM2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+        run: |
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            -o ServerAliveCountMax=10 \
+            $EC2_USERNAME@$EC2_HOST bash << 'ENDSSH'
+          set -e
+
+          # --- Nginx config ---
+          if [ ! -f /etc/nginx/sites-enabled/7barber ]; then
+            sudo cp /tmp/nginx.conf /etc/nginx/sites-available/7barber
+            sudo ln -sf /etc/nginx/sites-available/7barber /etc/nginx/sites-enabled/7barber
+            sudo rm -f /etc/nginx/sites-enabled/default
+          fi
+          sudo nginx -t && sudo systemctl enable nginx && sudo systemctl reload nginx
+
+          # --- PM2 restart ---
+          cd ~/7barber
+          pm2 delete 7barber 2>/dev/null || true
+          PORT=3000 pm2 start server.js --name 7barber
+          pm2 save
+
+          # --- PM2 tự start khi reboot ---
+          sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME | tail -1 | bash 2>/dev/null || true
+
+          rm -f /tmp/dist.tar.gz /tmp/nginx.conf
+          echo "✅ Deploy thành công!"
           ENDSSH
 
           rm -f /tmp/deploy_key
