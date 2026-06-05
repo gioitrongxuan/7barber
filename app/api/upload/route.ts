@@ -20,7 +20,8 @@ export async function POST(req: NextRequest) {
   const buffer = Buffer.from(bytes);
   const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
   const filename = `${randomUUID()}.${ext}`;
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+  const appDir = process.env.APP_DIR || process.cwd();
+  const uploadDir = path.join(appDir, 'public', 'uploads');
 
   if (!existsSync(uploadDir)) {
     await mkdir(uploadDir, { recursive: true });
