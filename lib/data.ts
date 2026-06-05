@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-const dataFile = path.join(process.cwd(), 'data', 'content.json');
+const appDir = process.env.APP_DIR || process.cwd();
+const dataFile = path.join(appDir, 'data', 'content.json');
 
 export interface Service {
   id: string;
