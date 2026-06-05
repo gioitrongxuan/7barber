@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  --gold: #c9a84c;
+  --dark: #1a1a1a;
+  --cream: #f8f4ee;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background-color: #f8f4ee;
+  color: #1a1a1a;
+}
+
+.section-divider {
+  width: 60px;
+  height: 3px;
+  background: #c9a84c;
+  margin: 0 auto 1.5rem;
+}
+
+.card-hover {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.6s ease forwards;
+}
