@@ -84,8 +84,8 @@ export default function HomePage() {
       <section className="bg-[#c9a84c] py-8">
         <div className="max-w-6xl mx-auto px-4 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
           {[
-            { number: '20+', label: 'Năm kinh nghiệm' },
-            { number: '1000+', label: 'Khách hàng' },
+            { number: '30+', label: 'Năm kinh nghiệm' },
+            { number: '5000+', label: 'Khách hàng' },
             { number: '6', label: 'Dịch vụ' },
             { number: '100%', label: 'Hài lòng' },
           ].map((stat, i) => (
@@ -192,7 +192,7 @@ export default function HomePage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
-              { icon: '👨‍🎨', title: 'Tay nghề cao', desc: 'Hơn 20 năm kinh nghiệm trong nghề, đảm bảo mỗi kiểu tóc đều hoàn hảo.' },
+              { icon: '👨‍🎨', title: 'Tay nghề cao', desc: 'Hơn 30 năm kinh nghiệm trong nghề, đảm bảo mỗi kiểu tóc đều hoàn hảo.' },
               { icon: '💰', title: 'Giá cả hợp lý', desc: 'Mức giá thân thiện, phù hợp với mọi đối tượng khách hàng.' },
               { icon: '❤️', title: 'Phục vụ tận tâm', desc: 'Lắng nghe và tư vấn kiểu tóc phù hợp với từng khuôn mặt.' },
             ].map((item, i) => (
